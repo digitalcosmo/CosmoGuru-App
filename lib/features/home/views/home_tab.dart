@@ -179,8 +179,7 @@ class _MyDay extends StatelessWidget {
                     builder: (ok) => DimBars(ok.data!),
                   ),
                 ],
-              ),
-            );
+              );
             }),
           ),
         );
