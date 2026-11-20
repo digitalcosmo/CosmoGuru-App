@@ -15,7 +15,6 @@ import '../../../models/load_result.dart';
 import '../../../models/planner_report.dart';
 import '../../../models/zone.dart';
 import '../../../ui/controls.dart';
-import '../../../ui/dim_bars.dart';
 import '../../../ui/glass.dart';
 import '../../../ui/motion.dart';
 import '../../../ui/pal.dart';
@@ -628,7 +627,6 @@ class _CalCell extends StatelessWidget {
   final Color background;
   final Color textColor;
   final bool isToday;
-  final bool selected;
   final VoidCallback onTap;
 
   const _CalCell({
@@ -638,7 +636,6 @@ class _CalCell extends StatelessWidget {
     required this.textColor,
     required this.onTap,
     this.isToday = false,
-    this.selected = false,
   });
 
   @override
@@ -652,9 +649,7 @@ class _CalCell extends StatelessWidget {
         decoration: BoxDecoration(
           color: background,
           borderRadius: BorderRadius.circular(11),
-          border: selected
-              ? Border.all(color: Pal.of(context).tx, width: 2)
-              : isToday
+          border: isToday
                   ? Border.all(color: Pal.of(context).dark ? Colors.white.withValues(alpha: 0.6) : AppColors.red, width: 1.4)
                   : null,
         ),
