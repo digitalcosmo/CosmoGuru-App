@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate platform folders (repo only tracks lib/ + branding/)
+        run: |
+          flutter create . --project-name cosmoguru --org com.cosmo --platforms=android,ios,web
+          rm -rf test
+          M=android/app/src/main/AndroidManifest.xml
+          # Release builds need INTERNET (flutter create only adds it to debug/profile).
+          sed -i 's#<manifest xmlns:android="http://schemas.android.com/apk/res/android">#<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET" />#' $M
+          grep -q 'android.permission.INTERNET' $M
+          sed -i 's#android:label="cosmoguru"#android:label="CosmoGuru"#' $M
+          # Same application ID as the existing CosmoGuru app (com.cosmo.guru)
+          # so this ships as an update to it.
+          for f in android/app/build.gradle.kts android/app/build.gradle; do
+            if [ -f "$f" ]; then
+              sed -i 's#applicationId = "com.cosmo.cosmoguru"#applicationId = "com.cosmo.guru"#; s#applicationId "com.cosmo.cosmoguru"#applicationId "com.cosmo.guru"#' "$f"
+            fi
+          done
+          grep -rq 'com.cosmo.guru"' android/app/build.gradle* 
+          # Launcher icons from the existing app.
+          cp -r branding/android/mipmap-* android/app/src/main/res/
+          cp branding/android/values/ic_launcher_background.xml android/app/src/main/res/values/
+          find android/app/src/main/res -name 'ic_launcher*.png' -path '*mipmap*' -delete
+
+      - name: Pub get
+        run: flutter pub get
+
+      - name: Analyze
+        id: analyze
+        run: |
+          set +e
+          flutter analyze lib --no-fatal-infos --no-fatal-warnings > analyze.txt 2>&1
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+          cat analyze.txt
+
+      - name: Build release APK (debug-signed, for testing)
+        id: apk
+        run: |
+          set +e
+          flutter build apk --release --split-per-abi > build.txt 2>&1
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+          tail -40 build.txt
+
+      - name: Upload APK
+        if: steps.apk.outputs.code == '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cosmoguru-apk
+          path: |
+            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+            build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
+          retention-days: 14
+
+      - name: Publish results to ci-results branch
+        run: |
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "analyze_exit: ${{ steps.analyze.outputs.code }}"
+            echo "apk_exit: ${{ steps.apk.outputs.code }}"
+            flutter --version
+            echo "===== ANALYZE (errors + warnings) ====="
+            grep -E "^\s*(error|warning)" analyze.txt || echo "none"
+            echo "===== ANALYZE (info count) ====="
+            grep -cE "^\s*info" analyze.txt || true
+            echo "===== BUILD (errors) ====="
+            grep -nE "Error|error:|FAILURE|What went wrong" -A3 build.txt | head -80 || true
+            echo "===== BUILD (tail) ====="
+            tail -25 build.txt
+          } > /tmp/ci-report.txt
+          git config user.name "ci-bot"
+          git config user.email "ci-bot@users.noreply.github.com"
+          git checkout --orphan ci-results-tmp
+          git rm -rf --cached . -q
+          cp /tmp/ci-report.txt ci-report.txt
+          git add ci-report.txt
+          git commit -m "CI report for ${GITHUB_SHA::7}" -q
+          git push -f origin HEAD:ci-results
+
+      - name: Fail if analyze or build failed
+        if: steps.analyze.outputs.code != '0' || steps.apk.outputs.code != '0'
+        run: exit 1
