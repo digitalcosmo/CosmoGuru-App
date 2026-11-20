@@ -1,12 +1,11 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import '../../../controllers/rashi_controller.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/dates.dart';
-import '../../../models/five_d.dart';
-import '../../../models/zone.dart';
 import '../../../ui/controls.dart';
-import '../../../ui/dim_bars.dart';
 import '../../../ui/glass.dart';
 import '../../../ui/motion.dart';
 import '../../../ui/pal.dart';
@@ -14,7 +13,7 @@ import '../../../ui/states.dart';
 import '../../../ui/stroke_icon.dart';
 import '../../../ui/tab_page.dart';
 import '../../../ui/tokens.dart';
-import '../../../ui/zone_icon.dart';
+import '../../../ui/zone_sky.dart';
 
 /// Rashi Bhavishya: free 5D for every Moon sign — yesterday, today, tomorrow.
 class RashiTab extends StatelessWidget {
@@ -31,12 +30,12 @@ class RashiTab extends StatelessWidget {
           children: [
             Text('RASHI BHAVISHYA', style: T.eyebrow),
             const SizedBox(height: 8),
-            Text('Your rashi, today.', style: T.h1),
+            Text('Turn the wheel to your sign', style: T.h1),
             const SizedBox(height: 8),
-            Text('Pick your Moon sign and see your day across five areas of life.', style: T.muted),
+            Text('Not sure of your rashi? Match the first letter of your name.', style: T.muted),
           ],
         ),
-        const RashiPicker(),
+        const RashiWheel(),
         const RashiDaySwitch(),
         const RashiReadingCard(),
         Text(
@@ -157,9 +156,9 @@ class RashiDaySwitch extends StatelessWidget {
   }
 }
 
-/// Navy card with the selected rashi's 5D for the selected day.
+/// Navy card with the selected rashi's 5D for the selected day, as a
+/// simple bar graph.
 class RashiReadingCard extends StatelessWidget {
-  /// Compact: no best/take-care boxes (used on Home).
   final bool compact;
   const RashiReadingCard({super.key, this.compact = false});
 
@@ -169,9 +168,10 @@ class RashiReadingCard extends StatelessWidget {
     return Obx(() {
       final r = c.rashi;
       final res = c.current;
+      final day = c.offset.value == 0 ? 'Today' : c.offset.value < 0 ? 'Yesterday' : 'Tomorrow';
       return Glass(
         dark: true,
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
         child: Builder(builder: (context) {
           final p = Pal.of(context);
           return Column(
@@ -179,54 +179,21 @@ class RashiReadingCard extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: AppColors.orange.withValues(alpha: 0.16),
-                    ),
-                    alignment: Alignment.center,
-                    child: StrokeIcon(r.icon, color: AppColors.orange, size: 24, strokeWidth: 1.7),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('${r.name} · ${r.english}', style: T.h3),
-                        const SizedBox(height: 3),
-                        Text(
-                          '${c.offset.value == 0 ? 'Today' : c.offset.value < 0 ? 'Yesterday' : 'Tomorrow'} · ${fmtDayLong(c.date)}',
-                          style: T.small.copyWith(color: p.tx3),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const ZoneInfoButton(),
+                  Expanded(child: Text('$day · 5D'.toUpperCase(), style: T.cap.copyWith(color: AppColors.orange))),
+                  Text('${r.name} · general', style: T.small.copyWith(color: p.tx2)),
                 ],
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
               ResultSwitch(
                 result: res,
                 onRetry: c.retry,
-                loading: Column(children: [
-                  if (!compact) ...[
-                    const Row(children: [
-                      Expanded(child: Skeleton(height: 92, radius: 16)),
-                      SizedBox(width: 10),
-                      Expanded(child: Skeleton(height: 92, radius: 16)),
-                    ]),
-                    const SizedBox(height: 22),
-                  ],
-                  const DimBarsSkeleton(),
-                ]),
-                builder: (ok) => _Reading(
-                  key: ValueKey('${r.apiName}${c.offset.value}'),
-                  data: ok.data!,
-                  compact: compact,
-                ),
+                loading: Skeleton(height: compact ? 170 : 210, radius: 16),
+                builder: (ok) => FiveDColumns(ok.data!, height: compact ? 120 : 150),
               ),
+              if (!compact) ...[
+                const SizedBox(height: 12),
+                Text(fmtDayLong(c.date), style: T.small.copyWith(color: p.tx3), textAlign: TextAlign.center),
+              ],
             ],
           );
         }),
@@ -235,70 +202,200 @@ class RashiReadingCard extends StatelessWidget {
   }
 }
 
-class _Reading extends StatelessWidget {
-  final FiveD data;
-  final bool compact;
-  const _Reading({super.key, required this.data, this.compact = false});
+/// The 12 signs on a wheel. Tap one and the wheel turns to bring it to the
+/// top, under the pointer; the centre shows its name and name letters.
+class RashiWheel extends StatefulWidget {
+  const RashiWheel({super.key});
+  @override
+  State<RashiWheel> createState() => _RashiWheelState();
+}
+
+class _RashiWheelState extends State<RashiWheel> {
+  final c = Get.find<RashiController>();
+  late final Worker _w;
+
+  /// Wheel rotation in sign-steps; follows the shortest way round.
+  late double _turn = -c.selected.value.toDouble();
+
+  @override
+  void initState() {
+    super.initState();
+    _w = ever<int>(c.selected, (i) {
+      final cur = -_turn;
+      var delta = (i - cur) % 12;
+      if (delta > 6) delta -= 12;
+      setState(() => _turn = -(cur + delta));
+    });
+  }
+
+  @override
+  void dispose() {
+    _w.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    // Highest and lowest dimension — something concrete to act on, without
-    // collapsing five different measures into one meaningless average.
-    final sorted = [...kDims]..sort((a, b) => data.of(b.key).compareTo(data.of(a.key)));
-    final best = sorted.first, low = sorted.last;
-    final flat = data.of(best.key).round() == data.of(low.key).round();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (!compact && !flat) ...[
-          Row(
-            children: [
-              Expanded(child: _Highlight(title: 'Best area', dim: best, value: data.of(best.key))),
-              const SizedBox(width: 10),
-              Expanded(child: _Highlight(title: 'Take care with', dim: low, value: data.of(low.key))),
-            ],
+    return LayoutBuilder(builder: (context, box) {
+      final size = math.min(box.maxWidth, 350.0);
+      final ctr = size / 2;
+      final ring = size * 0.4;
+      return Center(
+        child: SizedBox(
+          width: size,
+          height: size + 14,
+          child: TweenAnimationBuilder<double>(
+            tween: Tween(end: _turn),
+            duration: const Duration(milliseconds: 650),
+            curve: kEase,
+            builder: (context, turn, _) {
+              final sel = c.selected.value;
+              final r = kRashis[sel];
+              return Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Positioned(
+                    left: size * 0.05,
+                    top: 14 + size * 0.05,
+                    width: size * 0.9,
+                    height: size * 0.9,
+                    child: IgnorePointer(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(color: AppColors.orange.withValues(alpha: 0.28), width: 1.4),
+                        ),
+                      ),
+                    ),
+                  ),
+                  for (var i = 0; i < 12; i++)
+                    Builder(builder: (_) {
+                      final on = i == sel;
+                      final s = on ? 64.0 : 52.0;
+                      final a = ((i + turn) * 30 - 90) * math.pi / 180;
+                      return Positioned(
+                        left: ctr + ring * math.cos(a) - s / 2,
+                        top: 14 + ctr + ring * math.sin(a) - s / 2,
+                        width: s,
+                        height: s,
+                        child: _SignButton(index: i, selected: on),
+                      );
+                    }),
+                  // Centre disc: the selected sign.
+                  Positioned(
+                    left: ctr - size * 0.215,
+                    top: 14 + ctr - size * 0.215,
+                    width: size * 0.43,
+                    height: size * 0.43,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: const RadialGradient(
+                          center: Alignment(-0.3, -0.4),
+                          colors: [Colors.white, AppColors.redSoft, Color(0xFFFFE3DE)],
+                          stops: [0, 0.6, 1],
+                        ),
+                        border: Border.all(color: const Color(0xFFF3D3CE)),
+                        boxShadow: [BoxShadow(color: AppColors.red.withValues(alpha: 0.14), blurRadius: 40, offset: const Offset(0, 18))],
+                      ),
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 300),
+                        child: Column(
+                          key: ValueKey(sel),
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(r.name, style: T.h2.copyWith(fontSize: 22)),
+                            const SizedBox(height: 2),
+                            Text(r.english, style: T.small.copyWith(color: AppColors.tx2)),
+                            const SizedBox(height: 4),
+                            Text(r.letters,
+                                style: T.small.copyWith(fontSize: 11, color: AppColors.red, fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  // Pointer above the top sign, in front of it.
+                  Positioned(
+                    left: ctr - 12,
+                    top: 14 + ctr - ring - 32 - 14,
+                    child: const IgnorePointer(child: CustomPaint(size: Size(24, 12), painter: _Pointer())),
+                  ),
+                ],
+              );
+            },
           ),
-          const SizedBox(height: 22),
-        ],
-        DimBars(data),
-      ],
-    );
+        ),
+      );
+    });
   }
 }
 
-class _Highlight extends StatelessWidget {
-  final String title;
-  final Dim dim;
-  final double value;
-  const _Highlight({required this.title, required this.dim, required this.value});
+class _Pointer extends CustomPainter {
+  const _Pointer();
+  @override
+  void paint(Canvas canvas, Size s) {
+    final path = Path()
+      ..moveTo(0, 0)
+      ..lineTo(s.width, 0)
+      ..lineTo(s.width / 2, s.height)
+      ..close();
+    canvas.drawPath(path, Paint()..color = AppColors.red);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _SignButton extends StatelessWidget {
+  final int index;
+  final bool selected;
+  const _SignButton({required this.index, required this.selected});
 
   @override
   Widget build(BuildContext context) {
-    final z = Zone.of(value);
-    final p = Pal.of(context);
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: z.color.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: z.color.withValues(alpha: 0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title.toUpperCase(), style: T.cap.copyWith(fontSize: 10, letterSpacing: 1.2, color: p.tx3)),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              DimBadge(dim, size: 28),
-              const SizedBox(width: 8),
-              Expanded(child: Text(dim.label, style: T.strong.copyWith(fontSize: 14.5))),
-              ZoneIcon(z, size: 20),
+    final c = Get.find<RashiController>();
+    final r = kRashis[index];
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: '${r.name} (${r.english}), letters ${r.letters}',
+      child: Pressable(
+        onTap: () {
+          HapticFeedback.selectionClick();
+          c.selectRashi(index);
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 350),
+          curve: kEase,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: selected ? AppColors.red : Colors.white,
+            border: selected ? null : Border.all(color: AppColors.line),
+            boxShadow: [
+              BoxShadow(
+                color: selected ? AppColors.red.withValues(alpha: 0.35) : Colors.black.withValues(alpha: 0.06),
+                blurRadius: selected ? 24 : 12,
+                offset: Offset(0, selected ? 10 : 4),
+              ),
             ],
           ),
-          const SizedBox(height: 8),
-          Text(z.advice, style: T.small.copyWith(color: z.textOn(dark: p.dark), fontWeight: FontWeight.w600)),
-        ],
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              StrokeIcon(r.icon, color: selected ? Colors.white : AppColors.red, size: 22, strokeWidth: 1.8),
+              const SizedBox(height: 1),
+              Text(r.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.fade,
+                  softWrap: false,
+                  style: T.small.copyWith(
+                      fontSize: selected ? 10.5 : 9,
+                      fontWeight: FontWeight.w600,
+                      color: selected ? Colors.white : AppColors.tx)),
+            ],
+          ),
+        ),
       ),
     );
   }

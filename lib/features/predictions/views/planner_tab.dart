@@ -1,6 +1,8 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
+import 'package:intl/intl.dart';
 import '../../../controllers/home_controller.dart';
 import '../../../controllers/planner_controller.dart';
 import '../../../controllers/report_controller.dart';
@@ -12,7 +14,6 @@ import '../../../ui/links.dart';
 import '../../../models/load_result.dart';
 import '../../../models/planner_report.dart';
 import '../../../models/zone.dart';
-import '../../../ui/column_chart.dart';
 import '../../../ui/controls.dart';
 import '../../../ui/dim_bars.dart';
 import '../../../ui/glass.dart';
@@ -22,7 +23,7 @@ import '../../../ui/states.dart';
 import '../../../ui/stroke_icon.dart';
 import '../../../ui/tab_page.dart';
 import '../../../ui/tokens.dart';
-import '../../../ui/zone_icon.dart';
+import '../../../ui/zone_sky.dart';
 import '../../reports/views/report_tile.dart';
 
 const double _gap = 16;
@@ -219,6 +220,7 @@ void _showReportSheet(BuildContext context) {
 class _FiveDCard extends StatelessWidget {
   final String title;
   final String note;
+  final String actions;
   final Object periodKey;
   final FiveDResult? result;
   final VoidCallback onRetry;
@@ -226,6 +228,7 @@ class _FiveDCard extends StatelessWidget {
   const _FiveDCard({
     required this.title,
     required this.note,
+    required this.actions,
     required this.periodKey,
     required this.result,
     required this.onRetry,
@@ -239,102 +242,33 @@ class _FiveDCard extends StatelessWidget {
       canSwipe: p.canSwipe,
       child: Glass(
         dark: true,
+        padding: const EdgeInsets.fromLTRB(14, 18, 14, 16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            CardHeader(title, note: note, trailing: const ZoneInfoButton()),
-            const SizedBox(height: 18),
-            DirectionalSwitcher(
-              switchKey: periodKey,
-              direction: p.navDir,
-              child: ResultSwitch(
-                result: result,
-                onRetry: onRetry,
-                builder: (ok) => DimBars(ok.data!),
-              ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: CardHeader(title, note: note),
             ),
-            const SizedBox(height: 14),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const StrokeIcon(Ic.chevLeft, color: Color(0x998C8FB3), size: 12),
-                const SizedBox(width: 6),
-                Text('Swipe for previous / next',
-                    style: T.small.copyWith(fontSize: 11, color: const Color(0xCC8C8FB3))),
-                const SizedBox(width: 6),
-                const StrokeIcon(Ic.chevRight, color: Color(0x998C8FB3), size: 12),
-              ],
+            const SizedBox(height: 8),
+            // The sky stays in place; planets glide to the new values.
+            ResultSwitch(
+              result: result,
+              onRetry: onRetry,
+              loading: const Skeleton(height: 420, radius: 16),
+              builder: (ok) => Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ZoneSky(ok.data!),
+                  const SizedBox(height: 14),
+                  ZoneActions(ok.data!, caption: actions),
+                ],
+              ),
             ),
           ],
         ),
       ),
     );
-  }
-}
-
-class _DimChips extends StatelessWidget {
-  const _DimChips();
-
-  @override
-  Widget build(BuildContext context) {
-    final p = Get.find<PlannerController>();
-    return SizedBox(
-      height: 36,
-      child: Obx(() {
-        final sel = p.dim.value;
-        return ListView.separated(
-          scrollDirection: Axis.horizontal,
-          clipBehavior: Clip.none,
-          itemCount: kDims.length,
-          separatorBuilder: (_, __) => const SizedBox(width: 8),
-          itemBuilder: (_, i) {
-            final d = kDims[i];
-            return Chip2(
-              label: d.label,
-              selected: sel == d.key,
-              accent: d.color,
-              leading: StrokeIcon(d.icon, color: d.color, size: 15),
-              onTap: () {
-                HapticFeedback.selectionClick();
-                p.dim.value = d.key;
-              },
-            );
-          },
-        );
-      }),
-    );
-  }
-}
-
-/// Day-by-day bar graph of one dimension across a week, coloured by zone.
-class _WeekColumns extends StatelessWidget {
-  final List<DateTime> days;
-  final DateTime? selected;
-  final ValueChanged<DateTime> onTap;
-  const _WeekColumns({required this.days, required this.onTap, this.selected});
-
-  @override
-  Widget build(BuildContext context) {
-    final p = Get.find<PlannerController>();
-    return Obx(() {
-      final rep = p.report;
-      if (rep == null) return const SizedBox.shrink();
-      final key = p.dim.value;
-      p.results.length; // rebuild as days arrive
-      final items = <ColumnItem>[];
-      for (final day in days) {
-        final r = p.dailyOf(day);
-        final inRange = rep.contains(day);
-        items.add(ColumnItem(
-          label: kWeekdayShort[day.weekday - 1],
-          value: (r != null && r.isOk) ? r.data!.of(key) : null,
-          selected: selected != null && sameDay(day, selected!),
-          enabled: inRange && (r == null || r.status != LoadStatus.locked),
-          loading: inRange && (r == null || r.isLoading),
-        ));
-      }
-      return ColumnChart(items: items, onTap: (i) => onTap(days[i]));
-    });
   }
 }
 
@@ -350,67 +284,19 @@ class _DailyView extends StatelessWidget {
       final rep = p.report;
       if (rep == null) return const SizedBox.shrink();
       final d = p.day.value;
-      final week = p.daysOfWeek(mondayOf(d));
       final res = p.dailyOf(d);
-      final isToday = sameDay(d, today());
 
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: staggered(gap: _gap, stepMs: 60, [
-          Row(
-            children: [
-              Expanded(
-                child: Pressable(
-                  onTap: () => _showDayPicker(context),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Flexible(child: Text(fmtDayLong(d), style: T.h3.copyWith(fontSize: 20))),
-                          const SizedBox(width: 6),
-                          const StrokeIcon(Ic.chevDown, color: AppColors.tx2, size: 16),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Text(isToday ? 'Today · for routine events' : 'For routine events', style: T.small),
-                    ],
-                  ),
-                ),
-              ),
-              if (!isToday && rep.coversToday) ...[
-                Chip2(label: 'Today', onTap: p.goToday),
-                const SizedBox(width: 8),
-              ],
-              RoundIconButton(
-                icon: Ic.calendar,
-                color: AppColors.sun,
-                size: 44,
-                tooltip: 'Pick a date',
-                onTap: () => _showDayPicker(context),
-              ),
-            ],
-          ),
-          const _DayStrip(),
+          const _DateOrbit(),
           _FiveDCard(
             title: 'Daily 5D',
-            note: fmtDayShort(d),
+            note: 'for routine events',
+            actions: sameDay(d, today()) ? 'What to do today' : 'What to do this day',
             periodKey: d,
             result: res,
             onRetry: () => p.ensureDaily(d, force: true),
-          ),
-          Glass(
-            dark: true,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                CardHeader('This week, day by day', note: fmtWeekRange(week.first)),
-                const SizedBox(height: 14),
-                const _DimChips(),
-                const SizedBox(height: 18),
-                _WeekColumns(days: week, selected: d, onTap: p.selectDay),
-              ],
-            ),
           ),
         ]),
       );
@@ -418,137 +304,181 @@ class _DailyView extends StatelessWidget {
   }
 }
 
-/// Every day of the report in one horizontally scrollable strip. Scroll
-/// freely across weeks and months; the selected day stays centred.
-class _DayStrip extends StatefulWidget {
-  const _DayStrip();
+/// Day picker as an orbit: five days on an arc with the selected one at
+/// the top, previous / next at the ends, and the full date below (tap it
+/// for the calendar).
+class _DateOrbit extends StatelessWidget {
+  const _DateOrbit();
+
+  static const double _h = 100;
+
   @override
-  State<_DayStrip> createState() => _DayStripState();
+  Widget build(BuildContext context) {
+    final p = Get.find<PlannerController>();
+    return Obx(() {
+      final rep = p.report;
+      if (rep == null) return const SizedBox.shrink();
+      final d = p.day.value;
+      final isToday = sameDay(d, today());
+      return Column(
+        children: [
+          SizedBox(
+            height: _h,
+            child: LayoutBuilder(builder: (context, c) {
+              final w = c.maxWidth;
+              final beads = <Widget>[];
+              for (var k = -2; k <= 2; k++) {
+                final day = addDays(d, k);
+                final on = k == 0;
+                final size = on ? 52.0 : 42.0;
+                final a = k * 0.1745; // 10° per day along the arc
+                const r = 300.0;
+                final x = w / 2 + r * _sin(a) - size / 2;
+                final y = 4 + r * (1 - _cos(a)) - (on ? 2 : 0);
+                beads.add(AnimatedPositioned(
+                  key: ValueKey(day),
+                  duration: const Duration(milliseconds: 420),
+                  curve: kEase,
+                  left: x,
+                  top: y,
+                  width: size,
+                  height: size + 10,
+                  child: _Bead(day: day, selected: on, enabled: rep.contains(day)),
+                ));
+              }
+              return Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Positioned.fill(child: CustomPaint(painter: _ArcPainter())),
+                  ...beads,
+                  Positioned(
+                    left: 0,
+                    top: 40,
+                    child: RoundIconButton(
+                      icon: Ic.chevLeft,
+                      size: 40,
+                      enabled: p.canShiftDay(-1),
+                      tooltip: 'Previous day',
+                      onTap: () => p.shiftDay(-1),
+                    ),
+                  ),
+                  Positioned(
+                    right: 0,
+                    top: 40,
+                    child: RoundIconButton(
+                      icon: Ic.chevRight,
+                      size: 40,
+                      enabled: p.canShiftDay(1),
+                      tooltip: 'Next day',
+                      onTap: () => p.shiftDay(1),
+                    ),
+                  ),
+                ],
+              );
+            }),
+          ),
+          Pressable(
+            onTap: () => _showDayPicker(context),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '${DateFormat('EEEE, d MMMM').format(d)}${isToday ? ' · Today' : ''}',
+                    style: T.small.copyWith(fontSize: 12.5, fontWeight: FontWeight.w600, color: AppColors.tx2),
+                  ),
+                  const SizedBox(width: 4),
+                  const StrokeIcon(Ic.chevDown, color: AppColors.tx2, size: 14),
+                ],
+              ),
+            ),
+          ),
+        ],
+      );
+    });
+  }
+
+  static double _sin(double a) => math.sin(a);
+  static double _cos(double a) => math.cos(a);
 }
 
-class _DayStripState extends State<_DayStrip> {
-  static const _w = 52.0, _gapW = 8.0;
-  final _scroll = ScrollController();
-  final p = Get.find<PlannerController>();
-  late final Worker _w1;
-
+class _ArcPainter extends CustomPainter {
   @override
-  void initState() {
-    super.initState();
-    _w1 = ever<DateTime>(p.day, (_) => _center());
-    WidgetsBinding.instance.addPostFrameCallback((_) => _center(animate: false));
-  }
-
-  @override
-  void dispose() {
-    _w1.dispose();
-    _scroll.dispose();
-    super.dispose();
-  }
-
-  void _center({bool animate = true}) {
-    final rep = p.report;
-    if (rep == null || !_scroll.hasClients) return;
-    final i = p.day.value.difference(rep.start).inDays;
-    final vw = _scroll.position.viewportDimension;
-    final target = (4 + i * (_w + _gapW) - (vw - _w) / 2).clamp(0.0, _scroll.position.maxScrollExtent);
-    if (animate) {
-      _scroll.animateTo(target, duration: const Duration(milliseconds: 450), curve: kEase);
-    } else {
-      _scroll.jumpTo(target);
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = AppColors.lineStrong
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.4;
+    final path = Path()
+      ..moveTo(size.width * 0.17, 52)
+      ..quadraticBezierTo(size.width / 2, -2, size.width * 0.83, 52);
+    // Dashed: walk the path in 3 px dashes with 5 px gaps.
+    for (final m in path.computeMetrics()) {
+      for (var t = 0.0; t < m.length; t += 8) {
+        canvas.drawPath(m.extractPath(t, math.min(t + 3, m.length)), paint);
+      }
     }
   }
 
   @override
-  Widget build(BuildContext context) {
-    final rep = p.report;
-    if (rep == null) return const SizedBox.shrink();
-    // Day count via calendar dates (DST-safe), inclusive of the last day.
-    final count = DateTime.utc(rep.end.year, rep.end.month, rep.end.day)
-            .difference(DateTime.utc(rep.start.year, rep.start.month, rep.start.day))
-            .inDays +
-        1;
-    return SizedBox(
-      height: 80,
-      child: ShaderMask(
-        // Soft fade at both edges hints that the strip scrolls.
-        shaderCallback: (r) => const LinearGradient(
-          colors: [Colors.transparent, Colors.white, Colors.white, Colors.transparent],
-          stops: [0, 0.06, 0.94, 1],
-        ).createShader(r),
-        blendMode: BlendMode.dstIn,
-        child: ListView.separated(
-          controller: _scroll,
-          scrollDirection: Axis.horizontal,
-          physics: const BouncingScrollPhysics(),
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-          itemCount: count,
-          separatorBuilder: (_, __) => const SizedBox(width: _gapW),
-          itemBuilder: (_, i) {
-            final day = addDays(rep.start, i);
-            return Obx(() => SizedBox(
-                  width: _w,
-                  child: _DayPill(day: day, selected: sameDay(day, p.day.value)),
-                ));
-          },
-        ),
-      ),
-    );
-  }
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-class _DayPill extends StatelessWidget {
+class _Bead extends StatelessWidget {
   final DateTime day;
   final bool selected;
-  const _DayPill({required this.day, required this.selected});
+  final bool enabled;
+  const _Bead({required this.day, required this.selected, required this.enabled});
 
   @override
   Widget build(BuildContext context) {
     final p = Get.find<PlannerController>();
     final isToday = sameDay(day, today());
-    final firstOfMonth = day.day == 1;
-    const ink = Colors.white;
-
-    return Pressable(
-      onTap: () {
-        HapticFeedback.selectionClick();
-        p.selectDay(day);
-      },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 350),
-        curve: kEase,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          color: selected ? AppColors.sun : AppColors.card,
-          border: Border.all(
-            color: selected ? AppColors.sun : (isToday ? AppColors.sun.withValues(alpha: 0.6) : AppColors.line),
-            width: isToday && !selected ? 1.4 : 1,
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: '${DateFormat('EEEE d MMMM').format(day)}${isToday ? ', today' : ''}',
+      child: Pressable(
+        onTap: enabled && !selected
+            ? () {
+                HapticFeedback.selectionClick();
+                p.selectDay(day);
+              }
+            : null,
+        child: AnimatedOpacity(
+          duration: const Duration(milliseconds: 250),
+          opacity: enabled ? 1 : 0.3,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 350),
+            curve: kEase,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(40),
+              color: selected ? AppColors.red : Colors.white,
+              border: selected
+                  ? null
+                  : Border.all(color: isToday ? AppColors.red : AppColors.line, width: isToday ? 1.5 : 1),
+              boxShadow: [
+                BoxShadow(
+                  color: selected ? AppColors.red.withValues(alpha: 0.35) : Colors.black.withValues(alpha: 0.06),
+                  blurRadius: selected ? 18 : 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(kWeekdayShort[day.weekday - 1],
+                    style: T.small.copyWith(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: selected ? Colors.white.withValues(alpha: 0.8) : AppColors.tx3)),
+                Text('${day.day}',
+                    style: T.h3.copyWith(fontSize: selected ? 17 : 15, color: selected ? Colors.white : AppColors.tx)),
+              ],
+            ),
           ),
-          boxShadow: selected ? [BoxShadow(color: AppColors.sun.withValues(alpha: 0.35), blurRadius: 14)] : null,
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              firstOfMonth ? fmtMonShortYear(day).substring(0, 3) : kWeekdayShort[day.weekday - 1],
-              style: T.small.copyWith(
-                fontSize: 11.5,
-                fontWeight: FontWeight.w600,
-                color: selected ? ink.withValues(alpha: 0.75) : (firstOfMonth ? AppColors.sun2 : AppColors.tx3),
-              ),
-            ),
-            const SizedBox(height: 3),
-            Text('${day.day}', style: T.h3.copyWith(fontSize: 18, color: selected ? ink : AppColors.tx)),
-            const SizedBox(height: 3),
-            Text(
-              isToday ? 'Today' : '',
-              style: T.small.copyWith(
-                fontSize: 9.5,
-                fontWeight: FontWeight.w700,
-                color: selected ? ink : AppColors.sun2,
-              ),
-            ),
-          ],
         ),
       ),
     );
@@ -757,7 +687,7 @@ class _WeeklyView extends StatelessWidget {
         children: staggered(gap: _gap, stepMs: 60, [
           _PeriodNav(
             title: fmtWeekRange(w),
-            subtitle: '${isThisWeek ? 'This week' : 'Week ${i + 1} of ${weeks.length}'} · for frequent events',
+            subtitle: isThisWeek ? 'This week' : 'Week ${i + 1} of ${weeks.length}',
             canPrev: p.canShiftWeek(-1),
             canNext: p.canShiftWeek(1),
             onPrev: () => p.shiftWeek(-1),
@@ -766,24 +696,13 @@ class _WeeklyView extends StatelessWidget {
           ),
           _FiveDCard(
             title: 'Weekly 5D',
-            note: isThisWeek ? 'This week' : 'Week ${i + 1}',
+            note: 'for frequent events',
+            actions: isThisWeek ? 'What to do this week' : 'What to do that week',
             periodKey: w,
             result: res,
             onRetry: () => p.ensureWeekly(w, force: true),
           ),
-          Glass(
-            dark: true,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const CardHeader('Day by day', note: 'Tap a day to open it'),
-                const SizedBox(height: 14),
-                const _DimChips(),
-                const SizedBox(height: 18),
-                _WeekColumns(days: p.daysOfWeek(w), onTap: p.openDay),
-              ],
-            ),
-          ),
+          _WeekDetail(days: p.daysOfWeek(w)),
         ]),
       );
     });
@@ -941,7 +860,7 @@ class _MonthlyView extends StatelessWidget {
         children: staggered(gap: _gap, stepMs: 60, [
           _PeriodNav(
             title: fmtMonthYear(m),
-            subtitle: '${isThisMonth ? 'This month' : 'Month ${i + 1} of ${months.length}'} · for rare events',
+            subtitle: isThisMonth ? 'This month' : 'Month ${i + 1} of ${months.length}',
             canPrev: p.canShiftMonth(-1),
             canNext: p.canShiftMonth(1),
             onPrev: () => p.shiftMonth(-1),
@@ -950,134 +869,14 @@ class _MonthlyView extends StatelessWidget {
           ),
           _FiveDCard(
             title: 'Monthly 5D',
-            note: fmtMonShortYear(m),
+            note: 'for rare events',
+            actions: isThisMonth ? 'What to do this month' : 'What to do that month',
             periodKey: m,
             result: res,
             onRetry: () => p.ensureMonthly(m, force: true),
           ),
-          _MonthHeatmap(key: ValueKey('${m.year}-${m.month}'), month: m),
+          _MonthDetail(month: m),
         ]),
-      );
-    });
-  }
-}
-
-/// Calendar of one dimension's daily zone across the month; tap a date to
-/// see all five for that day.
-class _MonthHeatmap extends StatefulWidget {
-  final DateTime month;
-  const _MonthHeatmap({super.key, required this.month});
-
-  @override
-  State<_MonthHeatmap> createState() => _MonthHeatmapState();
-}
-
-class _MonthHeatmapState extends State<_MonthHeatmap> {
-  DateTime? _sel;
-
-  @override
-  Widget build(BuildContext context) {
-    final p = Get.find<PlannerController>();
-    final rep = p.report;
-    if (rep == null) return const SizedBox.shrink();
-
-    return Obx(() {
-      p.results.length; // rebuild as days stream in
-      final key = p.dim.value;
-      final sel = _sel;
-      final selRes = sel == null ? null : p.dailyOf(sel);
-      return Glass(
-        dark: true,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const CardHeader('Day by day', note: 'Tap a date', trailing: ZoneInfoButton()),
-            const SizedBox(height: 14),
-            const _DimChips(),
-            const SizedBox(height: 18),
-            _MonthGrid(
-              month: widget.month,
-              cell: (day) {
-                final inRange = rep.contains(day);
-                final r = p.dailyOf(day);
-                final v = (r != null && r.isOk) ? r.data!.of(key) : null;
-                final z = v == null ? null : Zone.of(v);
-                return _CalCell(
-                  day: day,
-                  enabled: inRange,
-                  background: !inRange
-                      ? Colors.transparent
-                      : z == null
-                          ? Colors.white.withValues(alpha: 0.05)
-                          : z.color.withValues(alpha: 0.9),
-                  textColor: !inRange
-                      ? Colors.white.withValues(alpha: 0.18)
-                      : z == null
-                          ? const Color(0xFFB9BBD6)
-                          : z.onColor,
-                  isToday: sameDay(day, today()),
-                  selected: sel != null && sameDay(day, sel),
-                  onTap: () {
-                    HapticFeedback.selectionClick();
-                    setState(() => _sel = day);
-                  },
-                );
-              },
-            ),
-            const SizedBox(height: 16),
-            const ZoneStrip(),
-            const SizedBox(height: 14),
-            AnimatedSize(
-              duration: const Duration(milliseconds: 380),
-              curve: kEase,
-              alignment: Alignment.topCenter,
-              child: sel == null
-                  ? Text('Tap any date to see all five for that day',
-                      style: T.small.copyWith(color: const Color(0xFF8C8FB3)), textAlign: TextAlign.center)
-                  : Container(
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.04),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: const Color(0x1FFFFFFF)),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(child: Text(fmtDayLong(sel), style: T.h3.copyWith(fontSize: 16))),
-                              SecondaryButton(label: 'Open day', onTap: () => p.openDay(sel)),
-                            ],
-                          ),
-                          const SizedBox(height: 14),
-                          ResultSwitch(
-                            result: selRes,
-                            onRetry: () => p.ensureDaily(sel, force: true),
-                            loading: const Skeleton(height: 60),
-                            builder: (ok) => Row(
-                              children: [
-                                for (final d in kDims)
-                                  Expanded(
-                                    child: Column(
-                                      children: [
-                                        DimBadge(d, size: 30),
-                                        const SizedBox(height: 8),
-                                        AnimatedPercent(value: ok.data!.of(d.key), style: T.pct.copyWith(fontSize: 14)),
-                                        const SizedBox(height: 2),
-                                        ZoneIcon(Zone.of(ok.data!.of(d.key)), size: 18),
-                                      ],
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-            ),
-          ],
-        ),
       );
     });
   }
@@ -1144,4 +943,249 @@ void _showMonthPicker(BuildContext context) {
       ],
     );
   });
+}
+
+
+// ───────────────────────── daily detail (week / month) ─────────────────────────
+
+const double _labelW = 64;
+
+/// Small caption above a detail card.
+class _DetailTitle extends StatelessWidget {
+  final String left;
+  final String right;
+  const _DetailTitle(this.left, this.right);
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+      child: Row(
+        children: [
+          Expanded(child: Text(left, style: T.cap.copyWith(fontSize: 10.5, letterSpacing: 1.2))),
+          Text(right, style: T.small.copyWith(fontSize: 11)),
+        ],
+      ),
+    );
+  }
+}
+
+/// A red box over one column, from Career down to Love: marks today.
+class _TodayBox extends StatelessWidget {
+  final double radius;
+  const _TodayBox({this.radius = 10});
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(radius),
+          color: AppColors.red.withValues(alpha: 0.05),
+          border: Border.all(color: AppColors.red, width: 1.5),
+        ),
+      ),
+    );
+  }
+}
+
+/// The week's seven days × five dimensions as zone-coloured dots.
+/// Tap a day to open it.
+class _WeekDetail extends StatelessWidget {
+  final List<DateTime> days;
+  const _WeekDetail({required this.days});
+
+  @override
+  Widget build(BuildContext context) {
+    final p = Get.find<PlannerController>();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const _DetailTitle('INSIDE THIS WEEK · DAILY DETAIL', 'tap a day'),
+        Glass(
+          padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
+          radius: 20,
+          child: Obx(() {
+            p.results.length; // rebuild as days arrive
+            final rep = p.report;
+            final ti = days.indexWhere((d) => sameDay(d, today()));
+            return LayoutBuilder(builder: (context, c) {
+              final colW = (c.maxWidth - _labelW) / 7;
+              return Stack(
+                children: [
+                  if (ti >= 0)
+                    Positioned(left: _labelW + colW * ti, width: colW, top: 0, bottom: 0, child: const _TodayBox()),
+                  Column(
+                    children: [
+                      Row(children: [
+                        const SizedBox(width: _labelW),
+                        for (var i = 0; i < 7; i++)
+                          Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              child: Center(
+                                child: Text(kWeekdayShort[days[i].weekday - 1],
+                                    style: T.small.copyWith(
+                                        fontSize: 10.5,
+                                        fontWeight: FontWeight.w600,
+                                        color: i == ti ? AppColors.red : AppColors.tx3)),
+                              ),
+                            ),
+                          ),
+                      ]),
+                      for (final dim in kDims)
+                        Container(
+                          decoration: const BoxDecoration(border: Border(top: BorderSide(color: Color(0xFFF3F3F6)))),
+                          padding: const EdgeInsets.symmetric(vertical: 6),
+                          child: Row(children: [
+                            SizedBox(width: _labelW, child: Text(dim.label, style: T.strong.copyWith(fontSize: 12.5))),
+                            for (final day in days)
+                              Expanded(
+                                child: Pressable(
+                                  onTap: rep != null && rep.contains(day) ? () => p.openDay(day) : null,
+                                  child: Center(child: _Dot(p.dailyOf(day), dim.key, inRange: rep?.contains(day) ?? false)),
+                                ),
+                              ),
+                          ]),
+                        ),
+                    ],
+                  ),
+                ],
+              );
+            });
+          }),
+        ),
+      ],
+    );
+  }
+}
+
+class _Dot extends StatelessWidget {
+  final FiveDResult? res;
+  final String dimKey;
+  final bool inRange;
+  const _Dot(this.res, this.dimKey, {required this.inRange});
+
+  @override
+  Widget build(BuildContext context) {
+    final v = (res != null && res!.isOk) ? res!.data!.of(dimKey) : null;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 400),
+      width: 14,
+      height: 14,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: !inRange
+            ? Colors.transparent
+            : v == null
+                ? const Color(0xFFEDEDF0)
+                : Zone.of(v).color,
+        border: inRange ? Border.all(color: Colors.black.withValues(alpha: 0.06)) : null,
+      ),
+    );
+  }
+}
+
+/// Every day of the month as a thin zone-coloured cell per dimension, so a
+/// whole month reads at a glance. Tap a cell to open that day.
+class _MonthDetail extends StatelessWidget {
+  final DateTime month;
+  const _MonthDetail({required this.month});
+
+  @override
+  Widget build(BuildContext context) {
+    final p = Get.find<PlannerController>();
+    final days = p.daysOfMonth(month);
+    final n = days.length;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const _DetailTitle('INSIDE THIS MONTH · DAILY DETAIL', 'tap a date'),
+        Glass(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+          radius: 20,
+          child: Obx(() {
+            p.results.length;
+            final rep = p.report;
+            final ti = days.indexWhere((d) => sameDay(d, today()));
+            return Column(
+              children: [
+                LayoutBuilder(builder: (context, c) {
+                  final cellW = (c.maxWidth - _labelW) / n;
+                  return Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      if (ti >= 0)
+                        Positioned(
+                          left: _labelW + cellW * ti - 3,
+                          width: cellW + 6,
+                          top: -4,
+                          bottom: -4,
+                          child: const _TodayBox(radius: 6),
+                        ),
+                      Column(
+                        children: [
+                          for (var r = 0; r < kDims.length; r++)
+                            Padding(
+                              padding: EdgeInsets.only(top: r == 0 ? 0 : 7),
+                              child: Row(children: [
+                                SizedBox(width: _labelW, child: Text(kDims[r].label, style: T.strong.copyWith(fontSize: 12))),
+                                for (final day in days)
+                                  Expanded(
+                                    child: Pressable(
+                                      onTap: rep != null && rep.contains(day) ? () => p.openDay(day) : null,
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(horizontal: 0.75),
+                                        child: _Cell(p.dailyOf(day), kDims[r].key, inRange: rep?.contains(day) ?? false),
+                                      ),
+                                    ),
+                                  ),
+                              ]),
+                            ),
+                        ],
+                      ),
+                    ],
+                  );
+                }),
+                const SizedBox(height: 8),
+                Padding(
+                  padding: const EdgeInsets.only(left: _labelW),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      for (final t in ['1', '10', '20', '$n']) Text(t, style: T.small.copyWith(fontSize: 10)),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          }),
+        ),
+      ],
+    );
+  }
+}
+
+class _Cell extends StatelessWidget {
+  final FiveDResult? res;
+  final String dimKey;
+  final bool inRange;
+  const _Cell(this.res, this.dimKey, {required this.inRange});
+
+  @override
+  Widget build(BuildContext context) {
+    final v = (res != null && res!.isOk) ? res!.data!.of(dimKey) : null;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 400),
+      height: 14,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(2),
+        color: !inRange
+            ? const Color(0xFFF7F7F9)
+            : v == null
+                ? const Color(0xFFEDEDF0)
+                : Zone.of(v).color,
+      ),
+    );
+  }
 }

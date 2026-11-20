@@ -22,6 +22,7 @@ import '../../../ui/stroke_icon.dart';
 import '../../../ui/tab_page.dart';
 import '../../../ui/tokens.dart';
 import '../../../ui/zone_icon.dart';
+import '../../../ui/zone_sky.dart';
 import '../../rashi/views/rashi_tab.dart';
 
 /// Home: the client's own day first (planner + rashi), then what CosmoGuru
@@ -164,19 +165,18 @@ class _MyDay extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      Expanded(child: Text('CK PLANNER · TODAY', style: T.cap.copyWith(color: AppColors.orange))),
+                      Expanded(child: Text('TODAY · 5D', style: T.cap.copyWith(color: AppColors.orange))),
                       Text(rep.name, style: T.small.copyWith(color: p.tx3)),
                       const SizedBox(width: 6),
                       StrokeIcon(Ic.chevRight, color: p.tx3, size: 16),
                     ],
                   ),
-                  const SizedBox(height: 6),
-                  Text('Your day across five areas', style: T.h3),
                   const SizedBox(height: 18),
                   ResultSwitch(
                     result: res,
                     onRetry: () => planner.ensureDaily(today(), force: true),
-                    builder: (ok) => DimBars(ok.data!),
+                    loading: const Skeleton(height: 70, radius: 16),
+                    builder: (ok) => FiveDIcons(ok.data!),
                   ),
                 ],
               );
